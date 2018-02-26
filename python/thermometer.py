@@ -29,6 +29,7 @@ try:
 	    show()
 	    time.sleep(delay)
 
-except:
+# If you press CTRL+C, cleanup and stop
+except KeyboardInterrupt:
 	    write_string( "Exit", kerning=False)
 	    show()
