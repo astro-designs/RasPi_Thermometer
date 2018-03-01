@@ -17,6 +17,17 @@ Press Ctrl+C to exit.
 delay = 1
 sensor = LM75.LM75()
 
+clear()
+temp_raw = sensor.getTemp()
+temp = temp_raw
+if temp > 128:
+    temp = temp - 256
+
+max_temp = temp
+min_temp = temp
+
+disp = 0
+
 try:
 	while True:
 	    clear()
@@ -25,7 +36,23 @@ try:
 	    if temp > 128:
 	        temp = temp - 256
 	    print temp
-	    write_string( "%.1f" % temp + " c", kerning=False)
+
+	    if temp > max_temp:
+	        max_temp = temp
+	    if temp < min_temp:
+	        min_temp = temp
+	        
+	    disp = disp + 1
+	    if disp > 9:
+	       disp = 0
+	       
+	    if disp == 8: # Display Min
+	       write_string( "%.1f" % min_temp + "cL", kerning=False)
+	    elif disp == 9: # Display Max
+	       write_string( "%.1f" % max_temp + "cH", kerning=False)
+	    else:
+	       write_string( "%.1f" % temp + "c ", kerning=False)
+
 	    show()
 	    time.sleep(delay)
 
