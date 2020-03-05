@@ -6,6 +6,8 @@ from datetime import datetime
 import os
 import sys
 import math
+import urllib
+import urllib2
 import requests
 
 # IFTTT Key definition
@@ -15,9 +17,12 @@ import requests
 # IFTTT_KEY = "randomstringofcharacters..."
 from key import IFTTT_KEY
 
-print("""RasPi 'analoguePi' TempLogger
+print("""
+Multi-Channel Temperature Logger
 By Mark Cantrill @AstroDesignsLtd
-Monitors & logs temperature using a Thermistors resistance to control the discharge of a capacitor. The time taken to discharge the capacitor is used to determine the temperature.
+Monitors & logs temperature using a Thermistors resistance to control the discharge of a capacitor.
+The time taken to discharge the capacitor is used to determine the resistance of the thermistor and the temperature is then derived from the resistance measurement.
+So all you need is a Thermistor and a 10uF capacitor - no ADC is required!
 
 Press Ctrl+C to exit.
 """)
@@ -44,25 +49,36 @@ Press Ctrl+C to exit.
 # 10) Calculate the temperature of the thermistor
 # 11) Repeat measurement a number of times and determine the average
 
+def LogToDomoticz(idx, SensorVal):
+	url = 'http://192.168.1.137:8085/json.htm?type=command&param=udevice&nvalue=0&idx='+idx+'&svalue='+str(SensorVal)
+	request = urllib2.Request(url)
+	response = urllib2.urlopen(request)
 
 # Set the GPIO modes
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
 
-# Set variables for the GPIO pins
-TPins = [12, 14, 15, 16]
+# Set variables for the GPIO pins used to measure temperature...
+LogTitles = ["HW Out", "HW Immersion", "HW Heating", "HW Thermostat"]
+TPins = [27, 15, 5, 7]
+LowWarning = [50,0,0,0]
+LowReset = [55,5,5,5]
+DomoticzIDX = ['7', '11', '10', '9'] # Use 'x' to disable logging to Domoticz for each sensor
 
-ActiveSensors = len(TPins)
+ActiveSensors = 4# Usually this is "len(TPins)"
 
-pinTestLED = 18
+# Define GPIO pin to drive LED that flashes when reading is taken
+# Set to 0 if there's no LED fitted
+pinTestLED = 3
 
 # Setup GPIO
 for pin in TPins:
 	GPIO.setup(pin, GPIO.OUT)
 	GPIO.output(pin, False)
 
-GPIO.setup(pinTestLED, GPIO.OUT)
-GPIO.output(pinTestLED, False)
+if pinTestLED > 0:
+	GPIO.setup(pinTestLED, GPIO.OUT)
+	GPIO.output(pinTestLED, False)
 
 # Initialise variables...
 NumReadings = 5
@@ -83,15 +99,15 @@ V_Threshold = V_Charge - 1.13
 Capacitance = 0.0000104 # 10uF
 T_Offset = -0.0005
 LogFileName = "TLog"
-LogTitles = ["Room", "Immersion", "Heating", "Hot Water"]
-LowWarning = [15,15,15,50]
-LowReset = [20,20,20,55]
 LowWarningIssued = [False, False, False, False]
 
 # Thermistor constants for Steinhart-Hart equation
 Thermistor_A = 0.001125308852122
 Thermistor_B = 0.000234711863267
 Thermistor_C = 0.000000085663516
+
+# Domoticz stuff
+DomoticzUrl = 'http://192.168.1.137:8085'
 
 try:
 
@@ -150,13 +166,15 @@ try:
 		# Measurement loop
 		for i in range (0, NumAverages):
 
-			for pin in TPins:
+			for pin in range(0, ActiveSensors):
 				# Change the pin mode to output
-				GPIO.setup(pin, GPIO.OUT)
+				GPIO.setup(TPins[pin], GPIO.OUT)
 				# Charge capacitor...
-				GPIO.output(pin, True)
+				GPIO.output(TPins[pin], True)
 
-			GPIO.output(pinTestLED, True)
+			if pinTestLED > 0:
+				GPIO.output(pinTestLED, True)
+
 			time.sleep (T_InitialCharge)
 
 			#Start timer
@@ -164,20 +182,25 @@ try:
 			StartTime = time.time()
 			
 			# Change the pin mode to input
-			for pin in TPins:
-				GPIO.setup(pin, GPIO.IN)
+			for pin in range(0, ActiveSensors):
+				GPIO.setup(TPins[pin], GPIO.IN)
 
 			StopTime = time.time()
 			MaxDuration = StopTime - StartTime
-			# Wait for voltage to rise enough to trigger GPIO
-			while (GPIO.input(TPins[0])==1 or GPIO.input(TPins[1])==1) and MaxDuration < T_Timeout:
+			# Wait for all measurements to be captured
+			MeasurementsComplete = 0
+			while MeasurementsComplete < ActiveSensors and MaxDuration < T_Timeout:
+				MeasurementsComplete = 0
 				StopTime = time.time()
 				for x in range (0, ActiveSensors):
 					if GPIO.input(TPins[x]) == 1:
 						# Calculate fall time
 						Duration[x] = StopTime - StartTime
+					else:
+						MeasurementsComplete = MeasurementsComplete + 1
 				MaxDuration = StopTime - StartTime
-			GPIO.output(pinTestLED, False)
+			if pinTestLED > 0:
+				GPIO.output(pinTestLED, False)
 			if MaxDuration > T_Timeout:
 				Timeout = True
 				
@@ -192,7 +215,7 @@ try:
 
 			Resistance[x] = -(AverageDuration[x] + T_Offset) / (Capacitance * math.log(1-V_Threshold/V_Charge))
 			#Resistance[x] = round(Resistance[x],1)
-			#print("Resistance: " + str(Resistance[x])
+			#print("Resistance: ", Resistance[x])
 
 			Temperature[x] = 1.0/(Thermistor_A+(Thermistor_B*math.log(Resistance[x])) +(Thermistor_C*pow(math.log(Resistance[x]),3)))
 			Temperature[x] = round(Temperature[x],3)
@@ -214,19 +237,32 @@ try:
 						LowWarningIssued[x] = True
 				if Temperature[x] > LowReset[x]:
 					LowWarningIssued[x] = False
-			print(logString)
+			
+				
+				
+				# Log to Domoticz...
+				if DomoticzIDX[x] != 'x':
+					LogToDomoticz(DomoticzIDX[x], Temperature[x])
+
 			# Log to webhook...
 			r = requests.post('https://maker.ifttt.com/trigger/RasPi_LogTemp/with/key/' + IFTTT_KEY, params={"value1":logTitleString,"value2":logString,"value3":"none"})
+
+			# Print the result
+			print(logString)
 			# Log to file...
 			logString = logString + "\r\n"
 			f.write(logString)
 
 		else:
-			# Log to file & print the result
+			# Timeout - Modify the log data to indicate timeout has occured
+			# Note - at the moment this modifies all sensor data but it should eventually only modify the ones that suffer a timeout
 			logString = logTime + ", " + str(Reading)
 			for x in range(0, ActiveSensors):
 				logString = logString + ", " + "Timeout - check connections"
+
+			# Print the result
 			print(logString)
+			# Log to file...
 			logString = logString + "\r\n"
 			f.write(logString)
 
