@@ -5,6 +5,8 @@ import time
 import LM75
 import sys
 import requests
+import urllib
+import urllib2
 
 from microdotphat import write_string, set_decimal, clear, show
 
@@ -35,17 +37,31 @@ LowWarningIssued = [False]
 Temperature = [0]
 NumReadings = 5
 
-# Define log interval, the number of seconds between logs
+# Default parameters
+NumReadings = 99999
 LogInterval = 300
+NumAverages = 1
 
-def LogTemp(NextLogTime, logTitleString, logString):
-	print("Logging Temperature to webhook...")
+def LogToDomoticz(idx, SensorVal):
+	try:
+		url = 'http://192.168.1.137:8085/json.htm?type=command&param=udevice&nvalue=0&idx=8'+'&svalue='+str(SensorVal)
+		request = urllib2.Request(url)
+		response = urllib2.urlopen(request)
+	except urllib2.HTTPError, e:
+		print e.code; time.sleep(60)
+	except urllib2.URLError, e:
+		print e.args; time.sleep(60)	
+		
+def LogTemp(NextLogTime, logTitleString, logString, SensorVal):
 	TimeNow = time.time()
 	if TimeNow > NextLogTime:
 		NextLogTime = NextLogTime + LogInterval
 		# Log to webhook...
-		print(logTitleString + logString)
+		print("Logging Temperature to webhook...")
 		r = requests.post('https://maker.ifttt.com/trigger/RasPi_LogTemp/with/key/'+IFTTT_KEY, params={"value1":logTitleString,"value2":logString,"value3":"none"})
+		
+		LogToDomoticz('8', SensorVal)
+		
 	return NextLogTime
 
 	
@@ -74,9 +90,6 @@ for x in range(0, ActiveSensors):
 	logTitleString = logTitleString + LogTitles[x] + ";"
 print (logTitleString)
 
-# Set first LogTime
-NextLogTime = time.time() + LogInterval
-
 try:
 
 	#r = requests.post('https://maker.ifttt.com/trigger/RasPi_Reboot/with/key/bPMigJxx44GrgeZkjHFu7m', params={"value1":"none","value2":"none","value3":"none"})
@@ -87,13 +100,20 @@ try:
 		NumReadings = int(sys.argv[1])
 
 	if len(sys.argv) > 2:
-		Interval = float(sys.argv[2])
+		LogInterval = float(sys.argv[2])
 
 	if len(sys.argv) > 3:
 		NumAverages = int(sys.argv[3])
 
 	if NumReadings < 1:
 		NumReadings = 9999	
+
+	print("NumReadings: ", NumReadings)
+	print("LogInterval: ", LogInterval)
+	print("NumAverages: ", NumAverages)
+
+	# Set first LogTime
+	NextLogTime = time.time() + LogInterval
 
 	while True:
 		TimeNow = time.time()
@@ -116,7 +136,7 @@ try:
 		logString = logTime + ";" + str(0) + ";" + str(Temperature[0]) + ";"
 
 		# Check to see if a new log is due to be sent and write to log if it's time...
-		NextLogTime = LogTemp(NextLogTime, logTitleString, logString)
+		NextLogTime = LogTemp(NextLogTime, logTitleString, logString, Temperature[0])
 		
 		disp = disp + 1
 		if disp > 9:
