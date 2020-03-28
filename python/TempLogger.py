@@ -25,33 +25,17 @@ Issues a warning to IFTTT
 Press Ctrl+C to exit.
 """)
 
-# Define the delay between each reading
-delay = 1
-
-# Define the sensors available...
-ActiveSensors = 1
-LogTitles = ["Kitchen"]
-LowWarning = [15]
-LowReset = [17]
-LowWarningIssued = [False]
-Temperature = [0]
-NumReadings = 5
-
-# Default parameters
-NumReadings = 99999
-LogInterval = 300
-NumAverages = 1
-
 def LogToDomoticz(idx, SensorVal):
+	url = 'http://192.168.1.32:8085/json.htm?type=command&param=udevice&nvalue=0&idx='+idx+'&svalue='+str(SensorVal)
 	try:
-		url = 'http://192.168.1.137:8085/json.htm?type=command&param=udevice&nvalue=0&idx=8'+'&svalue='+str(SensorVal)
 		request = urllib2.Request(url)
 		response = urllib2.urlopen(request)
+		print("Logged to Domoticz")
 	except urllib2.HTTPError, e:
 		print e.code; time.sleep(60)
 	except urllib2.URLError, e:
 		print e.args; time.sleep(60)	
-		
+
 def LogTemp(NextLogTime, logTitleString, logString, SensorVal):
 	TimeNow = time.time()
 	if TimeNow > NextLogTime:
@@ -60,15 +44,40 @@ def LogTemp(NextLogTime, logTitleString, logString, SensorVal):
 		print("Logging Temperature to webhook...")
 		r = requests.post('https://maker.ifttt.com/trigger/RasPi_LogTemp/with/key/'+IFTTT_KEY, params={"value1":logTitleString,"value2":logString,"value3":"none"})
 		
-		LogToDomoticz('8', SensorVal)
+		print("Logging Temperature to Domoticz...")
+		LogToDomoticz(DomoticzIDX[0], SensorVal)
 		
 	return NextLogTime
-
 	
-def DisplayTemp(temp, unitstr):
-	print("Displaying Temperature on MicroDot Phat...")
-	write_string( "%.1f" % temp + unitstr, kerning=False)
-	show()
+def DisplayTemp(NextDisplayTime, SensorVal, unitstr):
+	TimeNow = time.time()
+	if TimeNow > NextDisplayTime:
+		NextDisplayTime = NextDisplayTime + DisplayInterval
+		print("Displaying Temperature on MicroDot Phat...")
+		write_string( "%.1f" % SensorVal + unitstr, kerning=False)
+		show()
+
+	return NextDisplayTime
+
+
+# Define the sensors available...
+LogTitles = ["TemperatureProbe"]
+Temperature = [0]
+LowWarning = [15]
+LowReset = [17]
+LowWarningIssued = [False]
+DomoticzIDX = ['31'] # Use 'x' to disable logging to Domoticz for each sensor
+ActiveSensors = len(LogTitles)
+
+# Default parameters
+NumReadings = 99999
+LogInterval = 5 # Set to 0 to disable logging
+NumAverages = 1
+DisplayInterval = 5 # Set to 0 to disable display
+MeasurementPause = 1
+
+############################################################
+# LM75 Temperature Reader...
 
 # Initialisation...
 sensor = LM75.LM75()
@@ -91,10 +100,6 @@ for x in range(0, ActiveSensors):
 print (logTitleString)
 
 try:
-
-	#r = requests.post('https://maker.ifttt.com/trigger/RasPi_Reboot/with/key/bPMigJxx44GrgeZkjHFu7m', params={"value1":"none","value2":"none","value3":"none"})
-	#print ("Sending reboot message")
-	#print (r)
 	
 	if len(sys.argv) > 1:
 		NumReadings = int(sys.argv[1])
@@ -108,13 +113,15 @@ try:
 	if NumReadings < 1:
 		NumReadings = 9999	
 
-	print("NumReadings: ", NumReadings)
-	print("LogInterval: ", LogInterval)
-	print("NumAverages: ", NumAverages)
+	#print("NumReadings: ", NumReadings)
+	#print("LogInterval: ", LogInterval)
+	#print("NumAverages: ", NumAverages)
+	print("Temperature data logger running...")
 
 	# Set first LogTime
 	NextLogTime = time.time() + LogInterval
-
+	NextDisplayTime = time.time() + DisplayInterval
+	
 	while True:
 		TimeNow = time.time()
 		clear()
@@ -135,23 +142,34 @@ try:
 		logTime = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(TimeNow))
 		logString = logTime + ";" + str(0) + ";" + str(Temperature[0]) + ";"
 
-		# Check to see if a new log is due to be sent and write to log if it's time...
-		NextLogTime = LogTemp(NextLogTime, logTitleString, logString, Temperature[0])
+		# Write to log...
+		if LogInterval > 0:
+			NextLogTime = LogTemp(NextLogTime, logTitleString, logString, Temperature[0])
 		
-		disp = disp + 1
-		if disp > 9:
-			disp = 0
+		# Write to display...
+		if DisplayInterval > 0:
+			NextDisplayTime = DisplayTemp(NextDisplayTime, Temperature[0], "c ")
+		
+		# Optionally display a min / max reading...
+		#disp = disp + 1
+		#if disp > 9:
+		#	disp = 0
 	       
-		if disp == 8: # Display lowest recorded temperature
-			DisplayTemp(min_temp, "cL")
-		elif disp == 9: # Display highest recorded temperature
-			DisplayTemp(max_temp, "cH")
-		else: # Display current temperature
-			DisplayTemp(Temperature[0], "c ")
+		#if disp == 8: # Display lowest recorded temperature
+		#	DisplayTemp(min_temp, "cL")
+		#elif disp == 9: # Display highest recorded temperature
+		#	DisplayTemp(max_temp, "cH")
+		#else: # Display current temperature
+		#	DisplayTemp(Temperature[0], "c ")
 
-		time.sleep(delay)
+		# Pause between measurements
+		time.sleep(MeasurementPause)
 
 # If you press CTRL+C, cleanup and stop
 except KeyboardInterrupt:
+	print("Keyboard Interrupt (ctrl-c) - exiting program loop")
 	write_string( "Exit", kerning=False)
 	show()
+
+finally:
+	print("Closing data logger")

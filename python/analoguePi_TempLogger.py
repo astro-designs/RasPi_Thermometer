@@ -17,8 +17,7 @@ import requests
 # IFTTT_KEY = "randomstringofcharacters..."
 from key import IFTTT_KEY
 
-print("""
-Multi-Channel Temperature Logger
+print("""RasPi 'analoguePi' TempLogger
 By Mark Cantrill @AstroDesignsLtd
 Monitors & logs temperature using a Thermistors resistance to control the discharge of a capacitor.
 The time taken to discharge the capacitor is used to determine the resistance of the thermistor and the temperature is then derived from the resistance measurement.
@@ -50,22 +49,45 @@ Press Ctrl+C to exit.
 # 11) Repeat measurement a number of times and determine the average
 
 def LogToDomoticz(idx, SensorVal):
-	url = 'http://192.168.1.137:8085/json.htm?type=command&param=udevice&nvalue=0&idx='+idx+'&svalue='+str(SensorVal)
-	request = urllib2.Request(url)
-	response = urllib2.urlopen(request)
+	url = 'http://192.168.1.32:8085/json.htm?type=command&param=udevice&nvalue=0&idx='+idx+'&svalue='+str(SensorVal)
+	try:
+		request = urllib2.Request(url)
+		response = urllib2.urlopen(request)
+		print("Logged to Domoticz")
+	except urllib2.HTTPError, e:
+		print e.code; time.sleep(60)
+	except urllib2.URLError, e:
+		print e.args; time.sleep(60)	
 
 # Set the GPIO modes
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
 
-# Set variables for the GPIO pins used to measure temperature...
+# Define the sensors available...
 LogTitles = ["HW Out", "HW Immersion", "HW Heating", "HW Thermostat"]
-TPins = [27, 15, 5, 7]
-LowWarning = [50,0,0,0]
-LowReset = [55,5,5,5]
+Temperature = [0,0,0,0]
+TPins = [27, 15, 19, 20]
+LowWarning = [0,0,0,0]
+LowReset = [5,5,5,5]
+LowWarningIssued = [False, False, False, False]
 DomoticzIDX = ['7', '11', '10', '9'] # Use 'x' to disable logging to Domoticz for each sensor
+ActiveSensors = len(LogTitles)
 
-ActiveSensors = 4# Usually this is "len(TPins)"
+# Default parameters
+NumReadings = 5
+Interval = 5.0
+NumAverages = 3
+T_InitialCharge = 1.5
+T_Pause = 0.5
+T_Timeout = 3
+Duration = [0,0,0,0]
+SummedDuration = [0,0,0,0]
+AverageDuration = [0,0,0,0]
+Resistance = [0,0,0,0]
+Temperature = [0,0,0,0]
+
+############################################################
+# GPIOpin Temperature Reader...
 
 # Define GPIO pin to drive LED that flashes when reading is taken
 # Set to 0 if there's no LED fitted
@@ -80,18 +102,6 @@ if pinTestLED > 0:
 	GPIO.setup(pinTestLED, GPIO.OUT)
 	GPIO.output(pinTestLED, False)
 
-# Initialise variables...
-NumReadings = 5
-Interval = 5.0
-NumAverages = 3
-T_InitialCharge = 1.5
-T_Pause = 0.5
-T_Timeout = 3
-Duration = [0,0,0,0]
-SummedDuration = [0,0,0,0]
-AverageDuration = [0,0,0,0]
-Resistance = [0,0,0,0]
-Temperature = [0,0,0,0]
 
 # Define some constants
 V_Charge = 3.28
@@ -99,22 +109,14 @@ V_Threshold = V_Charge - 1.13
 Capacitance = 0.0000104 # 10uF
 T_Offset = -0.0005
 LogFileName = "TLog"
-LowWarningIssued = [False, False, False, False]
 
 # Thermistor constants for Steinhart-Hart equation
 Thermistor_A = 0.001125308852122
 Thermistor_B = 0.000234711863267
 Thermistor_C = 0.000000085663516
 
-# Domoticz stuff
-DomoticzUrl = 'http://192.168.1.137:8085'
-
 try:
 
-	#r = requests.post('https://maker.ifttt.com/trigger/RasPi_Reboot/with/key/' + IFTTT_KEY, params={"value1":"none","value2":"none","value3":"none"})
-	#print ("Sending reboot message")
-	#print (r)
-	
 	if len(sys.argv) > 1:
 		NumReadings = int(sys.argv[1])
 
@@ -277,7 +279,7 @@ try:
 	f.write("Logging Finished" + "\r\n")
 	f.close()
 
-
+# If you press CTRL+C, cleanup and stop
 except KeyboardInterrupt:
 	print("Keyboard Interrupt (ctrl-c) - exiting program loop")
 	f.close()
