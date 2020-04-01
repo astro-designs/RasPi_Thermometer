@@ -11,6 +11,11 @@ from microdotphat import write_string, set_decimal, clear, show
 import os
 import glob
 
+# Note - enable 1-wire interface using raspi-config
+# Note - Once enabled, run (once):
+# sudo modprobe w1–gpio
+# sudo modprobe w1-therm
+
 # IFTTT Key definition
 # Save your IFTTT key to key.py
 # or just define IFTTT_KEY somewhere inside this file
