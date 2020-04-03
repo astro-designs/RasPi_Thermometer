@@ -69,9 +69,10 @@ Temperature = [0,0,0,0]
 TPins = [27, 15, 19, 20]
 LowWarning = [0,0,0,0]
 LowReset = [5,5,5,5]
-LowWarningIssued = [False, False, False, False]
 DomoticzIDX = ['7', '11', '10', '9'] # Use 'x' to disable logging to Domoticz for each sensor
 ActiveSensors = len(LogTitles)
+
+LowWarningIssued = [False, False, False, False]
 
 # Default parameters
 NumReadings = 5
