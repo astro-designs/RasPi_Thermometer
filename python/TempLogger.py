@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import logging
 import time
 from datetime import datetime
 import LM75
@@ -24,26 +25,72 @@ import sensors
 # IFTTT_KEY = "randomstringofcharacters..."
 from key import IFTTT_KEY
 
-print("""RasPi Temperature Sensor
+import argparse
+
+parser = argparse.ArgumentParser(description='Simple Domoticz data logger')
+
+parser.add_argument('-ip', action='store', dest='IP_Address', default='192.168.1.32',
+                    help='IP Address of Domoticz server (e.g. 192.168.1.32)')
+
+parser.add_argument('-port', action='store', dest='port', default='8085',
+                    help='Domoticz listening port (e.g. 8085')
+
+parser.add_argument('-NumReadings', action='store', dest='NumReadings', default=0,
+                    help='Number of readings to log')
+
+parser.add_argument('-LogInterval', action='store', dest='LogInterval', default=30,
+                    help='Log interval in seconds (e.g. 30)')
+
+parser.add_argument('-NumAverages', action='store', dest='NumAverages', default=1,
+                    help='Number of readings to average')
+
+parser.add_argument('-DisplayInterval', action='store', dest='DisplayInterval', default=10,
+                    help='Display interval in seconds (e.g. 30)')
+
+arguments = parser.parse_args()
+
+# Read arguments...
+IP_Address = arguments.IP_Address
+port = arguments.port
+NumReadings = int(arguments.NumReadings)
+LogInterval = int(arguments.LogInterval)
+NumAverages = int(arguments.NumAverages)
+DisplayInterval = int(arguments.DisplayInterval)
+
+# Setup Log to file function
+timestr = 'logs/' + time.strftime("%B-%dth--%I-%M-%S%p") + '.log'
+logger = logging.getLogger('myapp')
+hdlr = logging.FileHandler(timestr)
+formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+hdlr.setFormatter(formatter)
+logger.addHandler(hdlr) 
+logger.setLevel(logging.INFO)
+
+print("""RasPi Temperature Reader / Logger
 By Mark Cantrill @AstroDesignsLtd
-Measure and logs temperature from external DS18B20 1-wire temperature sensor
+Measure and logs temperature from external DS18B20 1-wire temperature sensor or LM75
 Logs the data to Domoticz server
-Issues a warning to IFTTT 
+Optionally displays data on a MicroDot pHAT
+Can optionally issues a warning to IFTTT 
 
 Press Ctrl+C to exit.
 """)
 
+logger.info('Starting Logger...')
+
 # Define function to log data to Domoticz server...
 def LogToDomoticz(idx, SensorVal):
-	url = 'http://192.168.1.32:8085/json.htm?type=command&param=udevice&nvalue=0&idx='+idx+'&svalue='+str(SensorVal)
+	url = 'http://' + IP_Address + ':' + port + '/json.htm?type=command&param=udevice&nvalue=0&idx='+idx+'&svalue='+str(SensorVal)
 	try:
 		request = urllib2.Request(url)
 		response = urllib2.urlopen(request)
-		print('Logged to Domoticz ' + idx)
+		print('Logged ' + str(SensorVal) + ' to Domoticz ID ' + idx)
 	except urllib2.HTTPError, e:
-		print e.code; time.sleep(60)
+		logger.info(e.code)
+		print e.code;
 	except urllib2.URLError, e:
-		print e.args; time.sleep(60)	
+		logger.info(e.args)
+		print e.args;
 
 # Define function to log data...
 def LogTemp(NextLogTime, logTitleString, logString, SensorVal):
@@ -142,12 +189,6 @@ MeasurementInterval = sensors.MeasurementInterval
 Temperature = [0,0,0,0]
 LowWarningIssued = [False, False, False, False]
 
-# Default parameters
-NumReadings = 0 # Set to 0 to log continuously
-LogInterval = 30 # Set to 0 to disable logging
-NumAverages = 1
-DisplayInterval = 10 # Set to 0 to disable display
-
 # 1-wire config...
 if 'T1w' in SensorType:
 	print("Using 1-Wire Temperature Sensor(s)")
@@ -170,21 +211,10 @@ print (logTitleString)
 # Main program loop
 try:
 	
-	if len(sys.argv) > 1:
-		NumReadings = int(sys.argv[1])
-
-	if len(sys.argv) > 2:
-		LogInterval = float(sys.argv[2])
-
-	if len(sys.argv) > 3:
-		NumAverages = int(sys.argv[3])
-
-	if NumReadings < 1:
-		NumReadings = 9999	
-
-	#print("NumReadings: ", NumReadings)
-	#print("LogInterval: ", LogInterval)
-	#print("NumAverages: ", NumAverages)
+	print("Number of Readings: ", NumReadings)
+	print("Log Interval: ", LogInterval)
+	print("Number of Averages: ", NumAverages)
+	print("Display Interval: ", LogInterval)
 	print("Temperature data logger running...")
 
 	# Set first LogTime
@@ -221,6 +251,7 @@ try:
 			# Check for low warning
 			if Temperature[x] < LowWarning[x]:
 				if LowWarningIssued[x] == False:
+					logger.info('Low temperature warning')
 					# Issue Warning via IFTTT...
 					#r = requests.post('https://maker.ifttt.com/trigger/Water_low_temp/with/key/' + IFTTT_KEY, params={"value1":"none","value2":"none","value3":"none"})
 					LowWarningIssued[x] = True
@@ -229,6 +260,7 @@ try:
 			# Check for high warning
 			if Temperature[x] > HighWarning[x]:
 				if HighWarningIssued[x] == False:
+					logger.info('High temperature warning')
 					# Issue Warning via IFTTT...
 					#r = requests.post('https://maker.ifttt.com/trigger/Water_low_temp/with/key/' + IFTTT_KEY, params={"value1":"none","value2":"none","value3":"none"})
 					HighWarningIssued[x] = True
@@ -255,12 +287,16 @@ try:
 		# NumReadings countdown...
 		if Reading < NumReadings:
 			Reading = Reading + 1
-		
+	
+	logger.info('Logging completed.')
+	
 # If you press CTRL+C, cleanup and stop
 except KeyboardInterrupt:
-	print("Keyboard Interrupt (ctrl-c) - exiting program loop")
+	logger.info('Keyboard Interrupt (ctrl-c) detected - exiting program loop')
+	print("Keyboard Interrupt (ctrl-c) detected - exiting program loop")
 
 finally:
+	logger.info('Closing data logger')
 	print("Closing data logger")
 
 	
