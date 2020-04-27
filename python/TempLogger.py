@@ -10,6 +10,7 @@ import urllib2
 import requests
 from microdotphat import write_string, set_decimal, clear, show
 import os
+import subprocess
 from gpiozero import CPUTemperature
 
 # Import sensor configurations
@@ -66,7 +67,14 @@ hdlr.setFormatter(formatter)
 logger.addHandler(hdlr) 
 logger.setLevel(logging.INFO)
 
-print("""RasPi Temperature Reader / Logger
+# Miscelaneous definitions
+GET_THROTTLED_CMD = 'vcgencmd get_throttled'
+throttle_uv = 0
+throttle_uv_level = 0
+throttle_readings = 0
+throttle_uv_num = 0
+
+print("""RasPi Multi-Function Data Monitor / Logger
 By Mark Cantrill @AstroDesignsLtd
 Measure and logs temperature from external DS18B20 1-wire temperature sensor or LM75
 Logs the data to Domoticz server
@@ -92,6 +100,23 @@ def LogToDomoticz(idx, SensorVal):
 		logger.info(e.args)
 		print e.args;
 
+
+# Define a function to monitor the throttle status...
+def ThrottleMonitor():
+	global throttle_readings, throttle_uv_num, throttle_uv, throttle_uv_level
+	throttle_output = subprocess.check_output(GET_THROTTLED_CMD, shell=True)
+	throttle_status = int(throttle_output.split('=')[1], 0)
+	throttle_readings = throttle_readings + 1
+	if throttle_status & 1:
+		throttle_uv = 1
+		throttle_uv_num = throttle_uv_num + 1
+		throttle_uv_level = round(100 * (throttle_uv_num / throttle_readings),0)
+	else:
+		throttle_uv = 0
+		throttle_uv_num = max(0, throttle_uv_num - 1)
+		throttle_uv_level = round(100 * (throttle_uv_num / throttle_readings),0)
+
+
 # Define function to log data...
 def LogTemp(NextLogTime, logTitleString, logString, SensorVal):
 	TimeNow = time.time()
@@ -105,9 +130,9 @@ def LogTemp(NextLogTime, logTitleString, logString, SensorVal):
 		for x in range(0, ActiveSensors):
 			if DomoticzIDX[x] != 'x':
 				LogToDomoticz(DomoticzIDX[x], SensorVal[x])
-		
+
 	return NextLogTime
-	
+
 # Define function to display temperature on MicroDot Phat...
 def DisplayTemp(NextDisplayTime, SensorVal, unitstr):
 	TimeNow = time.time()
@@ -120,9 +145,9 @@ def DisplayTemp(NextDisplayTime, SensorVal, unitstr):
 	return NextDisplayTime
 
 def read_temp_CPU():
-	temp_c = CPUTemperature()
-	return temp_c
-	
+	measurement = CPUTemperature()
+	return measurement
+
 # Define function to read one-wire temperature sensors...
 def read_temp_T1w(SensorID):
     # Read one-wire device
@@ -135,43 +160,70 @@ def read_temp_T1w(SensorID):
         time.sleep(0.2)
         lines = f.readlines()
     f.close()
-	
+
+    # Format temperature data
     equals_pos = lines[1].find('t=')
     if equals_pos != -1:
         temp_string = lines[1][equals_pos+2:]
-        temp_c = float(temp_string) / 1000.0
-        temp_c = round(temp_c,1)
-        return temp_c
+        measurement = float(temp_string) / 1000.0
+        measurement = round(measurement,1)
+        return measurement
 
 def read_temp_LM75(SensorID):
 	clear()
 	temp_raw = sensor.getTemp()
 	if temp_raw > 128:
-		temp_c = temp_raw - 256
+		measurement = temp_raw - 256
 	else:
-		temp_c = temp_raw
-	return temp_c
+		measurement = temp_raw
+	return measurement
 
 def read_temp_TPin(SensorID):
-	temp = 22.2
-	return temp_c
-	
+	measurement = 22.2
+	return measurement
+
+def read_Trig(SensorID):
+	measurement = 100
+	return measurement
+
+def read_throttle(Mode = 0):
+	if Mode == 0: # Check status of under-voltage detection
+		measurement = throttle_uv
+
+	elif Mode == 1: # Check level of throttle
+		measurement = throttle_uv_level
+
+	else: # Any unsupported mode...
+		measurement = -999
+
+	return measurement
+
+
 def read_temp(SensorID):
+	measurement = -999
+
 	if SensorType[SensorID] == 'CPU_Temp':
 		cpu = read_temp_CPU()
-		temp_c = cpu.temperature
-	
+		measurement = cpu.temperature
+
 	if SensorType[SensorID] == 'T1w':
-		temp_c = read_temp_T1w(SensorID)
-	
+		measurement = read_temp_T1w(SensorID)
+
 	if SensorType[SensorID] == 'LM75':
-		temp_c = read_temp_LM75(SensorID)
-		
+		measurement = read_temp_LM75(SensorID)
+
 	if SensorType[SensorID] == 'TPin':
-		temp_c = read_temp_TPin(SensorID)
-	
-	return temp_c
-	
+		measurement = read_temp_TPin(SensorID)
+
+	if SensorType[SensorID] == 'Throttle_Level':
+		measurement = read_throttle(1)
+
+	if SensorType[SensorID] == 'Throttle_Status':
+		measurement = read_throttle(0)
+
+	return measurement
+
+
 # Sensor configuration...
 LogTitles = sensors.SensorName
 SensorType = sensors.SensorType
@@ -201,6 +253,11 @@ if 'LM75' in SensorType:
 	print("Using LM75 Temperature Sensor(s)")
 	sensor = LM75.LM75()
 
+# TrigN config...
+if 'TrigN' in SensorType:
+	print("Using Negative-Edge trigger on pin")
+	
+	
 # Update LogTitlesString with description of all sensors...
 logTitleString = ""
 for x in range(0, ActiveSensors):
@@ -212,22 +269,32 @@ print (logTitleString)
 try:
 	
 	print("Number of Readings: ", NumReadings)
-	print("Log Interval: ", LogInterval)
 	print("Number of Averages: ", NumAverages)
-	print("Display Interval: ", LogInterval)
+	print("Measurement Interval: ", MeasurementInterval)
+	print("Log Interval: ", LogInterval)
+	print("Display Interval: ", DisplayInterval)
 	print("Temperature data logger running...")
 
 	# Set first LogTime
 	NextLogTime = time.time() + LogInterval
+	
+	# Set first DisplayTime
 	NextDisplayTime = time.time() + DisplayInterval
 	
-	Reading = 0
+	# Set first MeasurementTime
 	NextMeasurementTime = time.time()
+	
+	# First reading...
+	Reading = 0
+	
 	while Reading < NumReadings or NumReadings < 1:
 		TimeNow = time.time()
-
+		
 		# Pause between measurements
 		while TimeNow < NextMeasurementTime:
+			# Check CPU throttle status while waiting...
+			print ("Reading throttle...")
+			ThrottleMonitor()
 			time.sleep(0.2)
 			TimeNow = time.time()
 
